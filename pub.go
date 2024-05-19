@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	crypto_rand "crypto/rand"
-	"crypto/tls"
 	"image"
 	"math"
 	"mime/multipart"
@@ -1091,8 +1090,8 @@ func customBoundary() string {
 	return "----WebKitFormBoundary" + string(result)
 }
 
-// 上传文件到bilibili
-func UploadFileToB(filePath string) string {
+// 上传数据到bilibili
+func UploadFileToB(tsData []byte) string {
 	urlStr := "https://cool.bilibili.com/x/material/up/upload"
 	csrf := GetBetweenStr(CookieBilibili, "bili_jct=", ";")
 	// aFile := pub.QrcodeFile("http://goo.gl/"+pub.RandStringRunes(pub.RandInt(10, 20))+fmt.Sprint(time.Now().UnixMicro()), 9000)
@@ -1103,7 +1102,7 @@ func UploadFileToB(filePath string) string {
 	crypto_rand.Read(token)
 	fileData = append(fileData, token...)
 
-	tsData, _ := os.ReadFile(filePath)
+	// tsData, _ := os.ReadFile(filePath)
 	fileData = append(fileData, tsData...)
 	// fileData, _ := os.ReadFile(`I:\Code\Go\Code\example\binToPng\1.gif`)
 	// fileData = append(aFile, fileData...)
@@ -1135,15 +1134,21 @@ func UploadFileToB(filePath string) string {
 
 	// Close the writer
 	_ = writer.Close()
-
-	// Create a http client and add proxy
-	proxyURL, _ := url.Parse("http://127.0.0.1:8888")
-	transport := &http.Transport{
-		Proxy:           http.ProxyURL(proxyURL),
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	var client http.Client
+	if UseProxy {
+		proxyUrl := "http://127.0.0.1:8888"
+		urlproxy, _ := url.Parse(proxyUrl)
+		client = http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				Proxy: http.ProxyURL(urlproxy),
+			},
+		}
+	} else {
+		client = http.Client{
+			Timeout: 30 * time.Second,
+		}
 	}
-	client := &http.Client{Transport: transport}
-	// Create the request
 	req, err := http.NewRequest("POST", urlStr, body)
 	if err != nil {
 		fmt.Println(err)
@@ -1152,8 +1157,8 @@ func UploadFileToB(filePath string) string {
 
 	// Set the content type
 	headers := map[string][]string{
-		"Content-Type":       {"multipart/form-data; boundary=" + bounary},
-		"Accept-Encoding":    {"gzip, deflate, br"},
+		"Content-Type": {"multipart/form-data; boundary=" + bounary},
+		// "Accept-Encoding":    {"gzip, deflate, br"},
 		"Accept-Language":    {"zh-CN,zh;q=0.9"},
 		"Connection":         {"keep-alive"},
 		"Host":               {"cool.bilibili.com"},
@@ -1165,7 +1170,7 @@ func UploadFileToB(filePath string) string {
 		"sec-ch-ua":          {"\"Chromium\";v=\"119\", \"Not?A_Brand\";v=\"24\""},
 		"sec-ch-ua-mobile":   {"?0"},
 		"sec-ch-ua-platform": {"\"Windows\""},
-		"User-Agent":         {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.160 Safari/537.36"},
+		"User-Agent":         {GetUserAgent()},
 		"Cookie":             {CookieBilibili},
 	}
 
