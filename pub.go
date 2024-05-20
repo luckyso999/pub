@@ -42,6 +42,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/parnurzeal/gorequest"
 	"github.com/skip2/go-qrcode"
+	"github.com/tidwall/gjson"
 )
 
 var (
@@ -1066,6 +1067,63 @@ func ImageToFile(imgName string, filename string) {
 
 func DownloadFileFromB(url string) ([]byte, error) {
 	rangeHeader := "bytes=60000-"
+	_, body, errs := gorequest.New().Get(url).
+		Set("Range", rangeHeader).
+		EndBytes()
+
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("错误下载数据: %v", errs[0])
+	}
+	rData, _ := AesDecrypt(body, []byte("ca2788cb8eb9e8c9"))
+	return rData, nil
+}
+
+// 下载并合并分段数据到文件
+func DownloadBFile(finalURL, outputFilePath string) error {
+	const separator = "{\"partURLs\":["
+	// 打开输出文件
+	outputFile, err := os.Create(outputFilePath)
+	if err != nil {
+		return fmt.Errorf("错误打开输出文件: %v", err)
+	}
+	defer outputFile.Close()
+
+	// 下载初始文件数据
+	initialData, err := DownloadFileFromB(finalURL)
+	if err != nil {
+		return fmt.Errorf("错误下载初始文件数据: %v", err)
+	}
+
+	// 检查数据是否包含分隔符
+	if bytes.HasPrefix(initialData, []byte(separator)) {
+		// 提取 JSON 数据部分
+		partURLs := gjson.GetBytes(initialData, "partURLs").Array()
+
+		for _, url := range partURLs {
+			partData, err := DownloadFileFromB(url.String())
+			if err != nil {
+				return fmt.Errorf("下载分段数据失败 %s: %v", url.String(), err)
+			}
+			_, err = outputFile.Write(partData)
+			if err != nil {
+				return fmt.Errorf("写入分段数据失败: %v", err)
+			}
+		}
+
+	} else {
+		// 如果没有分隔符，直接写入数据
+		_, err = outputFile.Write(initialData)
+		if err != nil {
+			return fmt.Errorf("写入文件数据失败: %v", err)
+		}
+	}
+
+	return nil
+}
+
+func DownloadFileFromBx(url string) ([]byte, error) {
+	rangeHeader := "bytes=60000-"
+	const separator = "{\"partURLs\":["
 
 	resp, body, errs := gorequest.New().Get(url).
 		Set("Range", rangeHeader).
@@ -1076,8 +1134,19 @@ func DownloadFileFromB(url string) ([]byte, error) {
 	}
 
 	fmt.Println(resp.Header)
-
-	return body, nil
+	rData, _ := AesDecrypt(body, []byte("ca2788cb8eb9e8c9"))
+	if bytes.HasPrefix(rData, []byte(separator)) {
+		var urlList []string
+		parts := bytes.SplitN(rData, []byte(separator), 2)
+		json.Unmarshal(parts[0], &urlList)
+		AllData := make([]byte, 0)
+		for _, url := range urlList {
+			Data, _ := DownloadFileFromB(url)
+			AllData = append(AllData, Data...)
+		}
+		rData = append(AllData, parts[1]...)
+	}
+	return rData, nil
 }
 
 func customBoundary() string {
@@ -1090,8 +1159,48 @@ func customBoundary() string {
 	return "----WebKitFormBoundary" + string(result)
 }
 
+func UploadFileToB(filePath string, partSize int) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	var partURLs []string
+	buffer := make([]byte, partSize)
+	for {
+		n, _ := file.Read(buffer)
+		if n == 0 {
+			break
+		}
+		retStr := UploadDataToB(buffer[:n])
+		partUrl := GetBetweenStr(retStr, `location":"`, `"`)
+		fmt.Println(partUrl)
+
+		if partUrl == "" {
+			return "", fmt.Errorf("错误上传数据,返回值为空")
+		}
+		partURLs = append(partURLs, partUrl)
+	}
+	if len(partURLs) > 1 {
+		summary := map[string]interface{}{
+			"partURLs": partURLs,
+		}
+		summaryData, _ := json.Marshal(summary)
+		retStr := UploadDataToB(summaryData)
+		partUrl := GetBetweenStr(retStr, `location":"`, `"`)
+		fmt.Println(partUrl)
+		return partUrl, nil
+	}
+	if len(partURLs) > 0 {
+		return partURLs[0], nil
+	}
+
+	return "", fmt.Errorf("错误上传文件,没有分段数据")
+}
+
 // 上传数据到bilibili
-func UploadFileToB(tsData []byte) string {
+func UploadDataToB(tsData []byte) string {
 	urlStr := "https://cool.bilibili.com/x/material/up/upload"
 	csrf := GetBetweenStr(CookieBilibili, "bili_jct=", ";")
 	// aFile := pub.QrcodeFile("http://goo.gl/"+pub.RandStringRunes(pub.RandInt(10, 20))+fmt.Sprint(time.Now().UnixMicro()), 9000)
@@ -1103,7 +1212,9 @@ func UploadFileToB(tsData []byte) string {
 	fileData = append(fileData, token...)
 
 	// tsData, _ := os.ReadFile(filePath)
+	tsData, _ = AesEncrypt(tsData, []byte("ca2788cb8eb9e8c9"))
 	fileData = append(fileData, tsData...)
+
 	// fileData, _ := os.ReadFile(`I:\Code\Go\Code\example\binToPng\1.gif`)
 	// fileData = append(aFile, fileData...)
 
