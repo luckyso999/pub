@@ -55,7 +55,7 @@ type FetchRequest struct {
 	URL     string            `json:"url"`
 	Method  string            `json:"method"`
 	Headers map[string]string `json:"headers"`
-	Body    string            `json:"body"`
+	Body    []byte            `json:"body"`
 }
 
 func FetchToJSON(fetchCall string) (FetchRequest, error) {
@@ -74,18 +74,57 @@ func FetchToJSON(fetchCall string) (FetchRequest, error) {
 	return fetchReq, nil
 }
 
+func ParseRawRequest(rawRequest string) FetchRequest {
+	var fetchReq FetchRequest
+	lines := strings.Split(rawRequest, "\n")
+	requestLine := strings.Fields(lines[0])
+	fetchReq.Method = requestLine[0]
+	fetchReq.URL = requestLine[1]
+	fetchReq.Headers = make(map[string]string)
+	// headers := make(http.Header)
+	var body string
+
+	// Read header lines until we get to the body
+	for _, line := range lines[1:] {
+		if line == "" {
+			break // End of headers
+		}
+		if strings.Contains(line, "Accept-Encoding") {
+			// 去掉Accept-Encoding头部，防止被压缩
+			continue
+		}
+		if strings.Contains(line, "Content-Length") {
+			// 去掉Content-Length头部，防止被修改
+			continue
+		}
+		parts := strings.SplitN(line, ": ", 2)
+		fetchReq.Headers[parts[0]] = parts[1]
+	}
+	// The rest is the body (if any)
+	bodyIndex := strings.Index(rawRequest, "\n\n")
+	if bodyIndex != -1 {
+		body = rawRequest[bodyIndex+len("\n\n"):]
+	}
+	fetchReq.Body = []byte(body)
+	return fetchReq
+}
+
 func FetchHTTPRequest(fetchReq FetchRequest) string {
 	client := &http.Client{}
 
-	proxy, err := url.Parse("http://127.0.0.1:8888")
-	if err != nil {
-		log.Printf("Error parsing proxy URL: %v", err)
+	// 如果提供了代理URL，则设置代理
+	if UseProxy {
+		proxy, err := url.Parse("http://127.0.0.1:8888")
+		if err != nil {
+			log.Fatalf("Error parsing proxy URL: %v", err)
+		}
+		client.Transport = &http.Transport{
+			Proxy: http.ProxyURL(proxy),
+		}
 	}
-	client.Transport = &http.Transport{
-		Proxy: http.ProxyURL(proxy),
-	}
+
 	// 构建新的请求
-	req, err := http.NewRequest(fetchReq.Method, fetchReq.URL, strings.NewReader(fetchReq.Body))
+	req, err := http.NewRequest(fetchReq.Method, fetchReq.URL, bytes.NewReader(fetchReq.Body))
 	if err != nil {
 		log.Printf("Error creating request: %v", err)
 	}
@@ -1149,7 +1188,7 @@ func DownloadFileFromBx(url string) ([]byte, error) {
 	return rData, nil
 }
 
-func customBoundary() string {
+func CustomBoundary() string {
 	rand.Seed(time.Now().UnixNano())
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	var result []byte
@@ -1221,7 +1260,7 @@ func UploadDataToB(tsData []byte) string {
 	// Create a buffer to store the request body
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	bounary := customBoundary()
+	bounary := CustomBoundary()
 	writer.SetBoundary(bounary)
 
 	// Add the other fields
@@ -1331,4 +1370,31 @@ func FunTime(start time.Time, timeLimit time.Duration) {
 
 		log.Println(GetCurrentFunctionName(), ":", "已用时", strTime)
 	}
+}
+
+func GorequestGet(Url string) []byte {
+	proxyUrl := ""
+	if UseProxy {
+		proxyUrl = "http://127.0.0.1:8888"
+	}
+
+	_, data, err := gorequest.New().
+		Get(Url).
+		Set("Connection", "Keep-Alive").
+		// Set("Content-Type", "multipart/form-data; boundary=----WebKitFormBoundaryftKfGeUavFx3m0Ks").
+		Set("Accept", "*/*").
+		Set("Accept-Language", "zh-CN,zh;q=0.9").
+		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 Safari/537.36").
+		Set("Sec-Fetch-Site", "same-origin").
+		Set("Sec-Fetch-Mode", "cors").
+		Set("Sec-Fetch-Dest", "empty").
+		Timeout(time.Second * 20).
+		Proxy(proxyUrl).
+		// Retry(3, 5*time.Second, http.StatusBadRequest, http.StatusInternalServerError).
+		EndBytes()
+	if err != nil {
+		fmt.Println("err", err)
+	}
+	// fmt.Println("data:", string(data))
+	return data
 }
