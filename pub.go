@@ -47,6 +47,7 @@ import (
 
 var (
 	UseProxy       = true
+	proxyUrl       = "http://127.0.0.1:8888"
 	muWriteLog     sync.Mutex
 	CookieBilibili string
 )
@@ -113,8 +114,8 @@ func FetchHTTPRequest(fetchReq FetchRequest) string {
 	client := &http.Client{}
 
 	// 如果提供了代理URL，则设置代理
-	if UseProxy {
-		proxy, err := url.Parse("http://127.0.0.1:8888")
+	if proxyUrl != "" {
+		proxy, err := url.Parse(proxyUrl)
 		if err != nil {
 			log.Fatalf("Error parsing proxy URL: %v", err)
 		}
@@ -1373,10 +1374,10 @@ func FunTime(start time.Time, timeLimit time.Duration) {
 }
 
 func GorequestGet(Url string) []byte {
-	proxyUrl := ""
-	if UseProxy {
-		proxyUrl = "http://127.0.0.1:8888"
-	}
+	// proxyUrl := ""
+	// if UseProxy {
+	// 	proxyUrl = "http://127.0.0.1:8888"
+	// }
 
 	_, data, err := gorequest.New().
 		Get(Url).
